@@ -104,6 +104,31 @@ GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large \
 gbrain import /mnt/c/Users/chris/source/repos/STRAIBot/memory
 ```
 
+**Import `memory/` only.** Never import `docs/`. The following must never be passed to GBrain:
+- `docs/property-memory-dump.md`
+- `docs/archive/broad-memory/**`
+- Any other file under `docs/`
+
+---
+
+## Do not import broad archive files
+
+Broad reference files have been moved to `docs/archive/broad-memory/` and must not be
+imported into GBrain. Here is why:
+
+- A file like `BlueHorizon/house-rules.md` embeds 10+ policies as a single chunk
+- GBrain cannot distinguish which policy a guest question is about when all policies share one embedding
+- A search for "late checkout" may return the full `house-rules.md` chunk instead of the precise `late-checkout-policy.md` fact
+- This causes the AI to receive too much irrelevant context and may produce vague or incorrect responses
+
+The rule: **one file = one topic**. GBrain retrieval is only as precise as the granularity of what was imported.
+
+```
+✅ Import this:    memory/BlueHorizon/policies/late-checkout-policy.md
+❌ Do not import:  docs/archive/broad-memory/BlueHorizon/house-rules.md
+❌ Do not import:  docs/property-memory-dump.md
+```
+
 To verify retrieval is working correctly after import, test the four key scenarios:
 
 ```sh
