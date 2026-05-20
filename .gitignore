@@ -1,0 +1,29 @@
+## Visual Studio / VS artifacts
+.vs/
+*.user
+*.suo
+
+## Build output
+**/bin/
+**/obj/
+
+## .NET
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## Secrets — never commit real tokens
+**/appsettings.*.json
+!**/appsettings.json
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Rider / JetBrains
+.idea/
+
+## Logs
+*.log
