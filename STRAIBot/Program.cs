@@ -1,6 +1,8 @@
 using Scalar.AspNetCore;
 using STRAIBot.Services;
+using STRAIBot.Services.GBrain;
 using STRAIBot.Services.Guesty;
+using STRAIBot.Services.Memory;
 using STRAIBot.Services.Messaging;
 using STRAIBot.Services.Properties;
 using STRAIBot.Services.Text;
@@ -25,15 +27,24 @@ builder.Services.AddOpenApi(options =>
 });
 
 // ── Property memory retrieval ─────────────────────────────────────────────────
-// MarkdownPropertyMemoryService reads local memory/{PropertyName}/*.md files.
-// MemoryContextService routes between Markdown and GBrain based on Memory:Provider config.
-// Switch Memory:Provider to "GBrain" in appsettings.json to activate GBrain retrieval.
+// MarkdownPropertyMemoryService reads local memory/{PropertyKey}/**/*.md files.
+// MemoryContextService routes between GBrain and Markdown based on Memory:Provider config.
+//
+// Memory:Provider options:
+//   "GBrain"    → query local GBrain MCP server at Memory:GBrainBaseUrl first
+//   "Markdown"  → read local markdown files only
+//
+// Memory:FallbackToMarkdown = true means GBrain failure/empty → fall back to Markdown.
+// Set Memory:Provider = "Markdown" to bypass GBrain entirely (offline dev).
 builder.Services.AddSingleton<IPropertyMemoryService, MarkdownPropertyMemoryService>();
 builder.Services.AddScoped<IMemoryContextService, MemoryContextService>();
 
 // ── GBrain HTTP client ────────────────────────────────────────────────────────
-// Configured via Memory:GBrainBaseUrl in appsettings.json (default: http://localhost:8088).
-// Safe to run locally without GBrain — all errors fall back to Markdown.
+// Connects to local GBrain MCP server (default: http://localhost:3131).
+// Health:  GET  /health
+// Search:  POST /mcp  (MCP tool-call, tool name: "search")
+// Admin:   GET  /admin  ← use this to verify tool names and argument keys
+// Safe to run without GBrain — all errors return empty string and fall back to Markdown.
 builder.Services.AddHttpClient<IGBrainClient, GBrainClient>();
 
 // ── Risk classification (safety fallback — may be removed after OpenAI validation) ──

@@ -1,4 +1,5 @@
 using STRAIBot.Models;
+using STRAIBot.Services.Memory;
 
 namespace STRAIBot.Services;
 
@@ -44,7 +45,7 @@ public class DraftResponseService : IDraftResponseService
     {
         // ── Step 1: Retrieve property memory context ──────────────────────────
         var retrievedContext = _memoryService.PropertyExists(propertyName)
-            ? await _memoryService.GetRelevantContextAsync(propertyName, guestMessage)
+            ? await _memoryService.GetContextAsync(propertyName, guestMessage)
             : string.Empty;
 
         // ── Step 2: Produce an AI decision ────────────────────────────────────
