@@ -1,422 +1,590 @@
-<div align="center">
+# STRAIBot
 
-<img src="https://img.shields.io/badge/Platform-.NET%2010-512BD4?style=for-the-badge&logo=dotnet&logoColor=white" />
-<img src="https://img.shields.io/badge/AI-Ready-FF6B35?style=for-the-badge&logo=openai&logoColor=white" />
-<img src="https://img.shields.io/badge/GBrain-Integrated-00C896?style=for-the-badge&logoColor=white" />
-<img src="https://img.shields.io/badge/Guesty-Connected-1A73E8?style=for-the-badge&logoColor=white" />
-<img src="https://img.shields.io/badge/Status-Active%20Development-brightgreen?style=for-the-badge" />
+**AI-native operational messaging platform for short-term rentals.**
 
-# 🏖️ STRAIBot
+STRAIBot is a **webhook-driven AI orchestration runtime** — not a chatbot wrapper. It receives inbound PMS events, resolves property context via scoped memory retrieval (**GBrain**), routes decisions through a structured AI reasoning layer (**OpenAI**), enforces operational policy in C#, and either autonomously replies or escalates to a human — all as a composable, API-first system.
 
-### *The AI-Powered Guest Communication Engine for Short-Term Rentals*
+```
+PMS Webhook → Property Resolution → GBrain Retrieval → OpenAI Decision → Policy Validation → Send or Escalate
+```
 
-**Respond faster. Escalate smarter. Scale without hiring.**
-
-[Architecture](#-architecture) · [Features](#-features) · [Roadmap](#-roadmap) · [Tech Stack](#-tech-stack) · [Getting Started](#-getting-started) · [Investor Vision](#-investor-vision)
+> Built on ASP.NET Core 10 · OpenAPI 3.1 · Scalar · GBrain · OpenAI structured outputs · Guesty Open API
 
 ---
 
-</div>
+## Why This Exists
 
-## 🚀 What Is STRAIBot?
+Short-term rental operations are fundamentally **repetitive, time-sensitive, policy-bound messaging work**:
 
-STRAIBot is an **AI-native guest communication platform** built for short-term rental hosts and property managers. It sits between your property management system and your guests — automatically classifying inbound messages, retrieving property-specific context, generating policy-grounded responses, and deciding in real time whether to auto-reply or escalate to a human.
+- Guests ask the same questions across hundreds of reservations
+- Policy violations require immediate, accurate responses
+- Emergencies demand instant escalation and acknowledgement
+- Hosts cannot afford to be available 24/7 across 5, 50, or 500 properties
 
-> **Receive a guest message → classify it → retrieve memory → generate a response → send or escalate.**
-> All in under a second. All grounded in your actual property policies.
+Traditional approaches — templated autoresponders, generic chatbots, offshore VAs — all fail at the same boundary: **they have no operational memory and no policy understanding**.
 
-No generic chatbot. No hallucinated amenities. No wrong answers about checkout times.
+STRAIBot treats guest messaging as an **event-driven orchestration problem**, not a conversation problem:
 
----
+| Traditional Approach | STRAIBot Approach |
+|---|---|
+| Template-matching keyword rules | Semantic retrieval + structured reasoning |
+| Generic chatbot | Property-scoped operational memory |
+| Static FAQ responses | AI decision with policy validation |
+| Manual escalation | Automated risk classification + routing |
+| One-size-fits-all responses | Per-property memory namespaces |
 
-## 💡 The Problem
-
-Short-term rental hosts and property managers spend **hours every day** responding to the same guest questions:
-
-- *"Can I bring my dog?"*
-- *"Is late checkout available?"*
-- *"Is the pool heated?"*
-- *"There's water leaking from the ceiling."*
-
-For operators managing 5, 50, or 500 listings, this is unsustainable. Hiring guest communication staff is expensive and doesn't scale. Generic chatbots give wrong answers and destroy trust.
-
-**STRAIBot solves this by combining AI decision-making with property-specific memory — so every response is accurate, policy-grounded, and on-brand.**
+The architecture draws directly from retrieval-first AI systems, operational agent design, and scoped memory patterns — the same ideas driving modern AI infrastructure at scale.
 
 ---
 
-## ✨ Features
-
-### 🧠 AI-Driven Decision Engine
-Every inbound message produces a structured `AiGuestMessageDecision` JSON contract:
-- **Risk classification** — Emergency / High / Medium / Low
-- **Policy rule type** — HardRule / HostDecision / Informational / Emergency
-- **Auto-send gate** — should the response go now, or wait for human review?
-- **Confidence scoring** — Low / Medium / High
-- **Escalation reasoning** — why was this flagged for the host?
-
-### 🏠 Property Memory (Markdown → GBrain)
-STRAIBot retrieves property-specific context before generating any response. Today that's structured Markdown files. Tomorrow it's **GBrain** — a vector memory system that stores and retrieves property knowledge at semantic depth.
+## Core Architecture
 
 ```
-memory/
-  CozyCrab/
-    amenities.md
-    house-rules.md
-    common-responses.md
-    parking.md
-  BlueHorizon/
-    amenities.md
-    house-rules.md
-    hot-tub.md
-    common-responses.md
-  TurquoiseBay/
-    amenities.md
-    house-rules.md
-    beach-items.md
-    common-responses.md
+┌──────────────────────────────────────────────────────────────────────┐
+│                         INGESTION LAYER                              │
+│                                                                      │
+│       Guesty Webhook                  Manual API / Admin UI          │
+│   POST /api/webhooks/guesty           POST /api/draft-response       │
+└──────────────────┬────────────────────────────┬─────────────────────┘
+                   │                            │
+                   ▼                            ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                       ORCHESTRATION LAYER                            │
+│                                                                      │
+│   Webhook Queue (Channel<T>)     Dedup Store (message ID)            │
+│                    │                                                 │
+│         GuestyWebhookProcessor (BackgroundService)                   │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                   │
+                   ┌───────────────▼────────────────┐
+                   │         RESOLUTION LAYER        │
+                   │                                 │
+                   │  GuestyReservationClient        │
+                   │    GET /reservations/{id}       │
+                   │    → extract GuestyListingId    │
+                   │                                 │
+                   │  PropertyMappingService         │
+                   │    GuestyListingId              │
+                   │    → PropertyKey                │
+                   │    → GBrainMemoryKey            │
+                   └───────────────┬────────────────┘
+                                   │
+                   ┌───────────────▼────────────────┐
+                   │           MEMORY LAYER          │
+                   │                                 │
+                   │  GBrainClient                   │
+                   │    POST {base}/query            │
+                   │    scope: GBrainMemoryKey       │
+                   │    → semantic retrieval         │
+                   │    → property-scoped context    │
+                   │                                 │
+                   │  Fallback: MarkdownMemory       │
+                   └───────────────┬────────────────┘
+                                   │
+                   ┌───────────────▼────────────────┐
+                   │        AI REASONING LAYER       │
+                   │                                 │
+                   │  AiGuestMessageDecisionService  │
+                   │    system prompt + context      │
+                   │    → OpenAI structured output   │
+                   │    → AiGuestMessageDecision     │
+                   └───────────────┬────────────────┘
+                                   │
+                   ┌───────────────▼─────────────────┐
+                   │      POLICY VALIDATION LAYER     │
+                   │                                  │
+                   │  AiDecisionValidator (C#)        │
+                   │    emergency override            │
+                   │    legal escalation              │
+                   │    approval phrase detection     │
+                   │    confidence gate               │
+                   └──────────┬───────────┬──────────┘
+                              │           │
+              ┌───────────────▼──┐   ┌───▼──────────────────┐
+              │  OUTBOUND SEND   │   │  ESCALATION ROUTING   │
+              │                  │   │                       │
+              │  GuestyMessage   │   │  HostNotification     │
+              │  Client          │   │  Service              │
+              │  /send-message   │   │  → alert / SMS        │
+              │  DryRun gate     │   │  → RequiresHostReview │
+              └──────────────────┘   └───────────────────────┘
 ```
 
-### 🔒 Safety Validator — C# as the Guardrail Layer
-The `AiDecisionValidator` runs after every AI decision and enforces hard invariants:
-- Never approve pets, parties, extra guests, late checkout, or service animal requests automatically
-- Always force Emergency classification for fire/smoke/gas/leak/lockout messages
-- Block auto-send if confidence is low or response is empty
-- Log every correction for audit trail
+---
 
-### ⚡ Full Duplex Messaging
+## System Responsibilities
+
+### STRAIBot — Orchestration Runtime
+
+STRAIBot owns the **operational pipeline**. It does not generate content, retrieve memory, or make policy decisions directly — it orchestrates the systems that do.
+
+- Receive and acknowledge PMS webhooks with immediate `200 OK`
+- Enqueue events for background processing (no inline AI work on the HTTP thread)
+- Resolve reservations → listings → internal property keys
+- Route retrieved context and guest messages to the AI reasoning layer
+- Enforce safety invariants in C# regardless of AI output
+- Gate outbound sends via `AutoSendMessaging:Enabled` + `DryRunMode`
+- Route escalations to the host notification system
+- Deduplicate Guesty webhook retries via message ID tracking
+
+### GBrain — Operational Memory Layer
+
+GBrain is a **scoped vector memory system**. Each property has a dedicated memory namespace (`GBrainMemoryKey`) where operational knowledge is stored as semantic embeddings.
+
 ```
-Guesty Webhook  →  STRAIBot receives
-STRAIBot thinks →  AI decision generated
-STRAIBot sends  →  Reply posted to Guesty conversation thread
+property:cozy-crab/     →  amenities, house-rules, parking, common-responses
+property:blue-horizon/  →  amenities, house-rules, hot-tub, common-responses
+property:turquoise-bay/ →  amenities, house-rules, beach-items, common-responses
 ```
 
-### 🔄 Guesty PMS Integration
-- Webhook receiver at `POST /api/webhooks/guesty`
-- Reservation lookup via Guesty Open API to resolve property from listing ID
-- Outbound replies via `POST /communication/conversations/{id}/send-message`
-- Duplicate protection via message ID deduplication
-- Direction filtering — never processes host-sent messages
+When a guest message arrives, GBrain retrieves only the **semantically relevant slice** of that property's knowledge — not everything, just what matters for this specific message.
 
-### 🧭 Multi-Platform Property Mapping
-One property. Multiple platforms. One internal key.
+**GBrain retrieves context. It does not generate guest responses.**
+
+Planned query shape:
+
 ```json
-{
-  "PropertyKey": "CozyCrab",
-  "GBrainMemoryKey": "property:cozy-crab",
-  "ExternalIds": {
-    "GuestyListingId": "...",
-    "AirbnbListingId": "...",
-    "VrboListingId": "..."
-  }
-}
-```
-
-### 🛡️ Controlled Auto-Send
-```json
-"AutoSendMessaging": {
-  "Enabled": false,
-  "DryRunMode": true
-}
-```
-Three modes: **off** (log only) → **dry run** (simulate, no API call) → **live** (real send). You decide when to flip the switch.
-
----
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        INBOUND                              │
-│                                                             │
-│   Guesty Webhook ──→ POST /api/webhooks/guesty              │
-│   Swagger/Admin  ──→ POST /api/draft-response               │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  Webhook Queue  │  (Channel<T>, in-memory)
-                    │  + Dedup Store  │  → future: Redis / SQL
-                    └────────┬────────┘
-                             │
-              ┌──────────────▼──────────────┐
-              │    GuestyWebhookProcessor   │
-              │       (BackgroundService)   │
-              └──────────────┬──────────────┘
-                             │
-         ┌───────────────────▼───────────────────┐
-         │           DraftResponseService         │
-         │              (Orchestrator)            │
-         └───┬──────────────┬────────────────┬───┘
-             │              │                │
-    ┌────────▼───┐  ┌───────▼──────┐  ┌─────▼──────────┐
-    │  Memory    │  │  AI Decision │  │   Validator    │
-    │  Context   │  │   Service    │  │  (C# Guardrail)│
-    │  Service   │  │              │  │                │
-    └────────┬───┘  └───────┬──────┘  └─────┬──────────┘
-             │              │                │
-    ┌────────▼───┐  ┌───────▼──────┐         │
-    │  Markdown  │  │  → OpenAI    │         │
-    │  (today)   │  │    Azure OAI │         │
-    │  GBrain    │  │  (tomorrow)  │         │
-    │  (next)    │  └──────────────┘         │
-    └────────────┘                           │
-                                             │
-                    ┌────────────────────────▼───┐
-                    │       Host Notification    │
-                    │    + Guesty Reply Send     │
-                    └────────────────────────────┘
-```
-
----
-
-## 🗺️ Roadmap
-
-### ✅ Completed
-- [x] ASP.NET Core 10 API with Scalar/OpenAPI docs
-- [x] Markdown-based property memory (3 properties)
-- [x] AI decision contract (`AiGuestMessageDecision`)
-- [x] C# safety validator (hard rule enforcement)
-- [x] Guesty webhook receiver
-- [x] Full duplex messaging (receive + reply)
-- [x] Property resolver (Guesty listing → internal key)
-- [x] Multi-platform property mapping model
-- [x] Duplicate message deduplication
-- [x] HTML message body cleaning
-- [x] Background processor with controlled auto-send gate
-- [x] Dry-run mode for safe testing
-
-### 🔜 In Progress / Next
-- [ ] **GBrain integration** — vector memory retrieval per property using `GBrainMemoryKey`
-- [ ] **OpenAI / Azure OpenAI** — replace local placeholder with real AI decision generation
-- [ ] **Guesty OAuth** — token refresh and scoped access
-- [ ] **Database persistence** — message audit trail, processed message store, analytics
-- [ ] **Multi-property dashboard** — admin UI for reviewing drafts and approvals
-- [ ] **Host escalation notifications** — SMS/email/push on high-risk messages
-- [ ] **Confidence threshold tuning** — per-property auto-send confidence floors
-- [ ] **Airbnb + VRBO webhook receivers**
-- [ ] **Docker containerization**
-- [ ] **Azure deployment pipeline**
-- [ ] **Retry queue + dead-letter queue** for failed sends
-
----
-
-## 🧬 GBrain — The Memory Layer
-
-GBrain is STRAIBot's **vector memory system**. Each property has a dedicated memory namespace (`GBrainMemoryKey`) where all property-specific knowledge is stored as semantic embeddings.
-
-When a guest sends a message, STRAIBot:
-1. Identifies the property via `PropertyKey`
-2. Queries GBrain using `GBrainMemoryKey` as the memory scope
-3. Retrieves the most semantically relevant context for that specific question
-4. Passes the retrieved context to the AI decision engine
-
-This means the AI never needs to see all property information — it only sees the **relevant slice**, making responses faster, cheaper, and more accurate.
-
-```
-GBrain Query:
 {
   "propertyKey":     "CozyCrab",
   "gBrainMemoryKey": "property:cozy-crab",
   "guestMessage":    "Is the pool heated?",
-  "listingId":       "guesty-abc123"
+  "topK":            5
+}
+```
+
+When GBrain is unavailable, `MemoryContextService` falls back to local Markdown files automatically.
+
+### OpenAI — Structured Reasoning Layer
+
+OpenAI receives a structured prompt containing the guest message and retrieved property context, and returns a **typed JSON decision** — not free-form text.
+
+The system prompt instructs the model to:
+- Use only the provided property context
+- Never invent amenities, exceptions, or policy changes
+- Never approve pets, parties, extra guests, late checkout, or refunds
+- Classify emergency messages and require host notification
+- Return valid JSON matching `AiGuestMessageDecision`
+
+```
+System Prompt + PropertyName + GuestMessage + RetrievedContext (GBrain)
+
+                          ▼  OpenAI  ▼
+
+AiGuestMessageDecision {
+  category, riskLevel, policyRuleType,
+  shouldAutoSend, requiresHostReview, shouldNotifyHost,
+  confidence, guestResponse, matchedPolicy,
+  reasoningSummary, escalationReason
+}
+```
+
+**OpenAI output is always validated by the C# policy layer before any message is sent.**
+
+---
+
+## Property Memory Model
+
+Each property maps three distinct identifier types:
+
+```json
+{
+  "PropertyKey":     "CozyCrab",
+  "DisplayName":     "Cozy Crab",
+  "GBrainMemoryKey": "property:cozy-crab",
+  "ExternalIds": {
+    "GuestyListingId": "abc123",
+    "AirbnbListingId": "",
+    "VrboListingId":   ""
+  },
+  "IsActive": true
+}
+```
+
+| Identifier | Scope | Used For |
+|---|---|---|
+| `GuestyListingId` | External (Guesty PMS) | Matching inbound webhook reservations |
+| `PropertyKey` | Internal (STRAIBot) | Business logic, memory folder, logging |
+| `GBrainMemoryKey` | Memory (GBrain) | Scoping all vector memory queries and storage |
+
+External listing IDs from any platform resolve into the same stable `GBrainMemoryKey` — memory is never fragmented by platform.
+
+---
+
+## Example Operational Flow
+
+**Guest message:** `"Can I bring my dog?"`
+
+```
+1.  Guesty fires webhook  →  POST /api/webhooks/guesty
+    { "event": "reservation.messageReceived", "reservationId": "res_xyz" }
+
+2.  Controller enqueues envelope  →  returns 200 OK immediately
+
+3.  GuestyWebhookProcessor dequeues
+
+4.  GuestyReservationClient  →  GET /reservations/res_xyz
+    extracts GuestyListingId: "abc123"
+
+5.  PropertyMappingService.GetByGuestyListingId("abc123")
+    →  PropertyKey:     "CozyCrab"
+    →  GBrainMemoryKey: "property:cozy-crab"
+
+6.  GBrainClient.QueryAsync("property:cozy-crab", "Can I bring my dog?")
+    →  "No pets of any kind. $500 fine if evidence found. No exceptions."
+
+7.  AiGuestMessageDecisionService.DecideAsync(propertyKey, message, context)
+    →  OpenAI returns:
+
+{
+  "category":           "PetRequest",
+  "policyRuleType":     "HardRule",
+  "riskLevel":          "Low",
+  "confidence":         "High",
+  "shouldAutoSend":     true,
+  "requiresHostReview": false,
+  "shouldNotifyHost":   false,
+  "guestResponse":      "Hi! Unfortunately this property does not allow pets of any kind — no exceptions. A $500 fine applies if evidence of a pet is found.",
+  "matchedPolicy":      "Pet Policy",
+  "reasoningSummary":   "Hard rule match on pet policy. No legal language detected."
 }
 
-GBrain Response:
-"The outdoor pool is seasonal and unheated.
- Usually open mid-May through mid-October, weather dependent."
-```
+8.  AiDecisionValidator.ValidateAndCorrect(decision)  →  passes all checks
 
-**No hallucinations. No invented amenities. No wrong answers.**
+9.  AutoSendMessaging gates evaluated (Enabled + DryRunMode)
+
+10. GuestyMessageClient.SendMessageAsync(conversationId, guestResponse)
+    →  POST /communication/conversations/{id}/send-message
+```
 
 ---
 
-## 🤖 OpenAI Integration — Coming Next
+## Autonomous vs Human Escalation
 
-The `IAiGuestMessageDecisionService` interface is already built. The local placeholder will be replaced by a single OpenAI API call that sends:
-
-```
-System prompt: You are an AI assistant for a short-term rental...
-               Return only valid JSON matching AiGuestMessageDecision.
-               Never approve pets, parties, late checkout, or refunds.
-
-User prompt:   PropertyName: CozyCrab
-               GuestMessage: Can I bring my dog?
-               RetrievedContext: [from GBrain]
-```
-
-And receives back a structured `AiGuestMessageDecision` JSON — validated by the C# safety layer before any response is sent.
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|---|---|
-| **API** | ASP.NET Core 10, C# 13 |
-| **API Docs** | Scalar / OpenAPI |
-| **Memory (now)** | Structured Markdown files |
-| **Memory (next)** | GBrain vector memory |
-| **AI (next)** | OpenAI GPT-4o / Azure OpenAI |
-| **PMS** | Guesty Open API v1 |
-| **Messaging** | `System.Threading.Channels` (in-process) → Azure Service Bus (future) |
-| **Auth** | Bearer token (Guesty), OpenAI API key |
-| **Deployment target** | Azure App Service / Docker |
-| **Persistence (next)** | SQL Server / PostgreSQL via EF Core |
+| Scenario | Auto Send | Host Review | Notify Host |
+|---|---|---|---|
+| WiFi / amenity question | ✅ Yes | ❌ No | ❌ No |
+| Parking / car limit | ✅ Yes | ❌ No | ❌ No |
+| Pet policy | ✅ Yes | ❌ No | ❌ No |
+| Smoking / vaping | ✅ Yes | ❌ No | ❌ No |
+| Late checkout | ✅ Yes | ❌ No | ❌ No |
+| Early check-in | ✅ Yes | ✅ Yes | ✅ Yes |
+| Party / occupancy | ✅ Yes | ❌ No | ✅ Yes |
+| Water leak / lockout / no heat | ✅ Acknowledgement | ✅ Yes | ✅ Yes |
+| Service animal / ADA / legal | ✅ Yes | ✅ Yes | ✅ Yes |
+| Refund / cancellation | ❌ No | ✅ Yes | ✅ Yes |
+| Complaint / damage | ❌ No | ✅ Yes | ✅ Yes |
+| AI confidence low | ❌ No | ✅ Yes | ❌ No |
 
 ---
 
-## 📦 Getting Started
+## OpenAPI + Scalar
 
-### Prerequisites
-- .NET 10 SDK
-- Visual Studio 2022+ or VS Code
-- Guesty account (optional — runs fully without it in local mode)
+STRAIBot is built **API-first**. All orchestration is inspectable and testable via Scalar before connecting to any live PMS.
 
-### Run locally
-
-```bash
-git clone https://github.com/chriswarin/STRAIBot.git
-cd STRAIBot
-dotnet run --project STRAIBot
+```
+https://localhost:7048/scalar/v1
 ```
 
-Browser opens automatically to **https://localhost:7048/scalar/v1**
+Scalar enables:
+- Full webhook simulation without a live Guesty connection
+- Payload inspection and schema validation
+- Iterative testing of AI decision output
+- API-first development with zero frontend dependency
 
-### Test in Scalar
+---
 
-**Pet question (HardRule — auto-respond, no host):**
+## API Reference
+
+### `POST /api/draft-response`
+
+Manual decision endpoint. Returns full `DraftResponseResult` synchronously. Used for Scalar testing, admin tooling, and prompt tuning.
+
+**Request:**
 ```json
-POST /api/draft-response
 {
   "propertyName": "CozyCrab",
   "guestMessage": "Can I bring my dog?"
 }
 ```
 
-**Emergency (immediate host notification):**
+**Response:**
 ```json
-POST /api/draft-response
 {
-  "propertyName": "TurquoiseBay",
-  "guestMessage": "There is water leaking from the ceiling"
+  "propertyName":       "CozyCrab",
+  "guestMessage":       "Can I bring my dog?",
+  "riskLevel":          "Low",
+  "policyRuleType":     "HardRule",
+  "category":           "PetRequest",
+  "confidence":         "High",
+  "shouldAutoSend":     true,
+  "requiresHostReview": false,
+  "shouldNotifyHost":   false,
+  "guestResponse":      "Hi! Unfortunately this property does not allow pets of any kind...",
+  "matchedPolicy":      "Pet Policy",
+  "reasoningSummary":   "Hard rule match on pet policy.",
+  "retrievedContext":   "No pets of any kind. $500 fine...",
+  "escalationReason":   null
 }
 ```
 
-**Late checkout (HardRule — firm no):**
+**Emergency example:**
 ```json
-POST /api/draft-response
-{
-  "propertyName": "BlueHorizon",
-  "guestMessage": "Can we check out at noon?"
-}
+{ "propertyName": "TurquoiseBay", "guestMessage": "There is water leaking from the ceiling" }
 ```
-
-### Configure for live Guesty
-
-In `appsettings.json`, replace the placeholder listing IDs:
-
-```json
-"Guesty": {
-  "BaseUrl": "https://open-api.guesty.com/v1",
-  "AccessToken": "your-token-here"
-},
-"PropertyMappings": [
-  {
-    "PropertyKey": "CozyCrab",
-    "GBrainMemoryKey": "property:cozy-crab",
-    "ExternalIds": {
-      "GuestyListingId": "your-real-guesty-listing-id"
-    },
-    "IsActive": true
-  }
-]
-```
-
-Set `AutoSendMessaging:Enabled = true` and `DryRunMode = false` when ready for live sends.
+Returns: `riskLevel: Emergency` · `requiresHostReview: true` · `shouldNotifyHost: true`
 
 ---
 
-## 📁 Project Structure
+### `POST /api/webhooks/guesty`
+
+Live Guesty webhook receiver. Returns `200 OK` immediately and enqueues for background processing.
+
+**Payload (Guesty fires this):**
+```json
+{
+  "event":         "reservation.messageReceived",
+  "reservationId": "res_abc123",
+  "data": {
+    "_id":            "msg_xyz789",
+    "body":           "<p>Can I bring my dog?</p>",
+    "direction":      "guest_to_host",
+    "conversationId": "conv_456",
+    "module":         "email"
+  }
+}
+```
+
+**Response:**
+```json
+{ "acknowledged": true, "queued": true }
+```
+
+---
+
+## Local Development
+
+### Prerequisites
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Bun](https://bun.sh) — for GBrain
+- WSL2 — recommended on Windows
+- OpenAI API key
+
+### 1 — Clone and run
+
+```powershell
+git clone https://github.com/chriswarin/STRAIBot.git
+cd STRAIBot
+dotnet run --project STRAIBot
+```
+
+Browser opens to `https://localhost:7048/scalar/v1`
+
+### 2 — WSL2 (Windows)
+
+```powershell
+wsl --install
+```
+
+### 3 — Install Bun
+
+```sh
+curl -fsSL https://bun.sh/install | bash
+source ~/.bashrc
+```
+
+### 4 — Install GBrain
+
+```sh
+bun install -g gbrain
+```
+
+### 5 — Set OpenAI API key
+
+```sh
+export OPENAI_API_KEY=sk-...
+# Add to ~/.bashrc to persist
+```
+
+### 6 — Initialize GBrain
+
+> ⚠️ Use the **same embedding model** for init, import, and all queries. Mixing models causes incorrect retrieval.
+
+```sh
+GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large gbrain init --pglite
+```
+
+### 7 — Import property memory
+
+```sh
+GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large \
+gbrain import /mnt/c/Users/chris/source/repos/STRAIBot/memory
+```
+
+### 8 — Test retrieval
+
+```sh
+GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large gbrain search "CozyCrab pet policy"
+GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large gbrain search "TurquoiseBay parking"
+GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large gbrain search "BlueHorizon hot tub"
+```
+
+### 9 — Configure appsettings.json
+
+```json
+{
+  "Guesty":   { "BaseUrl": "https://open-api.guesty.com/v1", "AccessToken": "" },
+  "Memory":   { "Provider": "Markdown", "GBrainBaseUrl": "http://localhost:8088" },
+  "AutoSendMessaging": { "Enabled": false, "DryRunMode": true },
+  "PropertyMappings": [
+    {
+      "PropertyKey":     "CozyCrab",
+      "GBrainMemoryKey": "property:cozy-crab",
+      "ExternalIds":     { "GuestyListingId": "REPLACE_WITH_REAL_ID" },
+      "IsActive":        true
+    }
+  ]
+}
+```
+
+> Store real tokens in `appsettings.Development.json` (gitignored) or environment variables — never commit credentials.
+
+---
+
+## Project Structure
 
 ```
 STRAIBot/
 ├── Controllers/
-│   ├── DraftResponseController.cs     # Manual/Swagger testing endpoint
-│   └── GuestyWebhookController.cs     # Live Guesty webhook receiver
+│   ├── DraftResponseController.cs      # Manual test + admin endpoint
+│   └── GuestyWebhookController.cs      # Guesty webhook receiver
 ├── Models/
-│   ├── AiGuestMessageDecision.cs      # AI decision contract
-│   ├── DraftResponseResult.cs         # API response shape
-│   ├── PropertyMapping.cs             # Property config model
-│   ├── PropertyExternalIds.cs         # Per-platform listing IDs
-│   ├── Guesty/                        # Guesty API models
-│   └── Messaging/                     # Outbound message models
+│   ├── AiGuestMessageDecision.cs       # Typed AI output contract
+│   ├── DraftResponseResult.cs          # API response shape
+│   ├── PropertyMapping.cs              # Property config model
+│   ├── PropertyExternalIds.cs          # Per-platform listing IDs
+│   ├── Guesty/                         # Guesty API payload models
+│   └── Messaging/                      # Outbound message models
 ├── Services/
-│   ├── AiGuestMessageDecisionService  # AI decision (→ OpenAI)
-│   ├── AiDecisionValidator            # C# safety guardrail
-│   ├── DraftResponseService           # Pipeline orchestrator
-│   ├── MemoryContextService           # Memory routing (Markdown → GBrain)
-│   ├── MarkdownPropertyMemoryService  # Local markdown lookup
-│   ├── GBrainClient                   # GBrain HTTP client (ready)
-│   ├── Guesty/                        # Guesty API clients
-│   ├── Properties/                    # Property resolution
-│   ├── Messaging/                     # Queue + background processor
-│   └── Text/                          # HTML cleaner
+│   ├── AiGuestMessageDecisionService   # → OpenAI structured reasoning
+│   ├── AiDecisionValidator             # C# policy guardrail
+│   ├── DraftResponseService            # Pipeline orchestrator
+│   ├── MemoryContextService            # Memory routing (Markdown → GBrain)
+│   ├── MarkdownPropertyMemoryService   # Local Markdown fallback
+│   ├── GBrainClient                    # GBrain HTTP client
+│   ├── Guesty/
+│   │   ├── GuestyReservationClient     # Reservation lookup
+│   │   └── GuestyMessageClient         # Outbound reply sender
+│   ├── Properties/
+│   │   ├── PropertyMappingService      # Config-based property lookup
+│   │   └── PropertyResolver            # Webhook → property resolution
+│   ├── Messaging/
+│   │   ├── InMemoryWebhookMessageQueue  # Channel<T> queue
+│   │   ├── InMemoryProcessedMessageStore # Dedup tracking
+│   │   └── GuestyWebhookProcessor       # BackgroundService pipeline
+│   └── Text/
+│       └── HtmlMessageCleaner          # Guesty HTML → plain text
 ├── memory/
-│   ├── BlueHorizon/                   # Property knowledge files
 │   ├── CozyCrab/
+│   ├── BlueHorizon/
 │   └── TurquoiseBay/
 └── docs/
-    └── property-memory-dump.md        # Full property reference
+    └── property-memory-dump.md
 ```
 
 ---
 
-## 💼 Investor Vision
+## Current Status
 
-The short-term rental industry is a **$100B+ global market** with millions of individual hosts and thousands of property management companies — nearly all of them under-resourced on guest communications.
+### ✅ Working
 
-**STRAIBot's opportunity:**
+- ASP.NET Core 10 API with OpenAPI 3.1 and Scalar
+- Guesty webhook receiver with in-process queue
+- Reservation → listing → property resolution pipeline
+- Multi-platform property mapping (`PropertyKey`, `GBrainMemoryKey`, external IDs)
+- Markdown memory retrieval with GBrain interface in place
+- Structured `AiGuestMessageDecision` contract
+- C# policy validation layer (emergency, legal, approval phrase detection)
+- Outbound Guesty reply client with dry-run gate
+- Message ID deduplication
+- HTML to plain text message cleaning
 
-| Segment | Problem | STRAIBot Solution |
-|---|---|---|
-| Independent hosts (1–5 properties) | No staff, constant interruptions | Fully automated responses, zero hiring |
-| Mid-size operators (5–50 properties) | Staff burnout, inconsistent responses | AI handles 80%+, humans handle edge cases |
-| Large PMCs (50–500+ properties) | Scale impossible without headcount | White-label AI layer, API-first integration |
+### 🔄 In Progress
 
-### Why now?
-- **GPT-4o** makes accurate, property-grounded responses possible at <$0.01/message
-- **Guesty, Hostaway, Lodgify** all have open APIs — integration is viable today
-- **Vector memory** (GBrain) solves the hallucination problem that killed earlier chatbot attempts
-- **Guests expect instant replies** — 5-minute response windows are now the norm on Airbnb
+- OpenAI structured JSON decision generation (interface built, placeholder active)
+- GBrain live query integration (client built, endpoint contracts defined)
+- Live Guesty outbound send validation
+- Host escalation notification delivery
 
-### Architecture advantages
-- **AI-agnostic** — one interface swap connects OpenAI, Azure OpenAI, Anthropic, or any future model
-- **PMS-agnostic** — property mapping model supports Guesty, Airbnb, VRBO, and any future platform
-- **Memory-agnostic** — Markdown today, GBrain tomorrow, any vector DB the day after
-- **No lock-in** — C# safety validator ensures brand safety regardless of which AI is underneath
+### 📋 Planned
 
-### Revenue model (planned)
-- SaaS per-property monthly subscription
-- Usage-based pricing for high-volume operators
-- White-label licensing for large PMCs and channel managers
-
----
-
-## 🤝 Contributing
-
-STRAIBot is actively developed. If you're interested in contributing to the GBrain integration, OpenAI decision layer, or property management integrations — open an issue or reach out directly.
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) for details.
+- Azure OpenAI support
+- Airbnb and VRBO webhook receivers
+- Database-backed audit trail and dedup store
+- Confidence threshold tuning per property
+- Host mobile notifications
+- Multi-property admin dashboard
+- Retry queue and dead-letter handling
+- Policy versioning
+- Docker and Azure deployment pipeline
 
 ---
 
-<div align="center">
+## Tech Stack
 
-**Built with ❤️ for the short-term rental industry**
+| Layer | Technology |
+|---|---|
+| Runtime | ASP.NET Core 10, C# 13 |
+| API Docs | OpenAPI 3.1, Scalar |
+| Memory | GBrain (vector), Markdown (fallback) |
+| AI Reasoning | OpenAI GPT-4o / Azure OpenAI |
+| Embeddings | `text-embedding-3-large` |
+| PMS Integration | Guesty Open API v1 |
+| Queue | `System.Threading.Channels` → Azure Service Bus |
+| Local Vector DB | PGLite via GBrain |
+| Runtime (GBrain) | Bun, WSL2 |
+| Deployment Target | Azure App Service, Docker |
+| Persistence (planned) | PostgreSQL / SQL Server via EF Core |
 
-*STRAIBot — where AI meets hospitality*
+---
 
-</div>
+## Design Philosophy
+
+**Retrieval before reasoning.**
+The AI never operates on a blank context. Every decision is grounded in property-specific knowledge retrieved from GBrain. Hallucination risk is bounded by what retrieval returns.
+
+**Orchestration over raw prompting.**
+STRAIBot does not send guest messages to OpenAI and ask it to reply. It sends a structured prompt with context, receives a typed JSON decision, validates it in C#, and then acts. The model is a reasoning component, not an autonomous agent.
+
+**Policy enforcement in the host layer, not the AI layer.**
+Emergency overrides, legal escalation rules, and approval phrase detection live in C#. These invariants cannot be bypassed by model misclassification or unexpected output.
+
+**Human-in-the-loop by default.**
+`AutoSendMessaging:Enabled` is `false` by default. `DryRunMode` is `true`. Every decision is logged before anything is sent. Autonomy is earned incrementally.
+
+**Memory is operational, not conversational.**
+GBrain stores property policies, amenity details, and house rules — not conversation history. The goal is accurate policy recall, not session continuity.
+
+---
+
+## Disclaimer
+
+STRAIBot is an active architecture exploration and MVP. It is not production-ready.
+
+Before production deployment, the following are required:
+
+- Structured observability (tracing, metrics, alerting)
+- Durable message queue (Azure Service Bus or equivalent)
+- Database-backed audit trail and dedup store
+- Webhook signature verification and rate limiting
+- AI output monitoring and drift detection
+- Policy versioning and change management
+- Human approval workflows for edge cases
+- Retry logic and dead-letter queue handling
+- Load and reliability testing
+
+---
+
+Built by [@chriswarin](https://github.com/chriswarin)
+
+*Orchestration-first. Retrieval-grounded. Policy-aware.*
