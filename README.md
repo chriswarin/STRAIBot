@@ -421,6 +421,23 @@ GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large \
 gbrain import /mnt/c/Users/chris/source/repos/STRAIBot/memory
 ```
 
+Memory is organized as **granular, single-topic files** under `memory/` — one file per policy or amenity per property. This structure is what makes GBrain retrieval precise.
+
+> **`docs/property-memory-dump.md`** is a human and Copilot reference file. It is **not** the GBrain import source. See [`docs/gbrain-memory-structure.md`](docs/gbrain-memory-structure.md) for the full explanation of why granular files produce better retrieval.
+
+```
+memory/
+  BlueHorizon/
+    policies/         ← HardRule and HostDecision policies, one topic per file
+    amenities/        ← Informational facts, one topic per file
+  CozyCrab/
+    policies/
+    amenities/
+  TurquoiseBay/
+    policies/
+    amenities/
+```
+
 ### 8 — Test retrieval
 
 ```sh
