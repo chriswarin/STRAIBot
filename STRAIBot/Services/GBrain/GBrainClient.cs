@@ -5,32 +5,40 @@ using System.Text.Json.Serialization;
 namespace STRAIBot.Services.GBrain;
 
 /// <summary>
-/// HTTP client for the local GBrain MCP server at http://localhost:3131.
+/// HTTP client for the local GBrain MCP server (v0.37+).
 ///
-/// GBrain exposes an MCP (Model Context Protocol) endpoint at /mcp.
-/// This client sends an MCP tool-call request to invoke the "search" tool,
-/// which performs semantic vector search over the imported memory files.
+/// Protocol notes (confirmed via live testing):
 ///
-/// The MCP call is isolated entirely in this class — if the payload shape changes
-/// (e.g. tool name, argument keys, response structure), only this file needs updating.
+///   Endpoint:   POST {baseUrl}/mcp
+///   Auth:       Authorization: Bearer {Memory:GBrainAccessToken}
+///   Accept:     application/json, text/event-stream   ← REQUIRED by GBrain
+///   Tool name:  "query"  (hybrid vector + keyword search)
+///   Arguments:  { "query": "{propertyKey} {guestMessage}", "limit": N }
 ///
-/// IMPORTANT — MCP payload notes:
-///   Tool name:      "search" (verify against GBrain admin at /admin)
-///   Argument keys:  "query", "namespace" (verify against /admin or GBrain docs)
-///   Response path:  result.content[0].text (standard MCP tool response shape)
+///   There is NO namespace/scope argument on the query tool.
+///   Property scoping is achieved by prefixing the propertyKey into the query string.
+///   Example: "BlueHorizon late checkout cleaners 10am"
 ///
-///   If GBrain exposes a simpler REST endpoint in future, replace SendMcpSearchAsync
-///   with a direct POST/GET call — the interface and fallback logic stay unchanged.
+///   Response format: SSE envelope  (even though we request application/json)
+///     "event: message\ndata: {jsonrpc-payload}\n\n"
+///   The jsonrpc result shape:
+///     result.content[0].text  →  JSON array of chunk objects
+///   Each chunk:
+///     { slug, title, chunk_text, score, ... }
 ///
-/// Configured via:
-///   Memory:GBrainBaseUrl      — base URL (default: http://localhost:3131)
-///   Memory:FallbackToMarkdown — whether to fall back to Markdown on failure
+/// Configured via appsettings.json:
+///   Memory:GBrainBaseUrl        — server address (e.g. http://172.23.150.171:3131)
+///   Memory:GBrainAccessToken    — bearer token from client_credentials OAuth flow
+///   Memory:FallbackToMarkdown   — fall back to Markdown on empty/error
 /// </summary>
 public class GBrainClient : IGBrainClient
 {
     private readonly HttpClient _http;
     private readonly ILogger<GBrainClient> _logger;
     private readonly string _baseUrl;
+    private readonly string _accessToken;
+
+    private const int DefaultTopK = 3;
 
     public GBrainClient(
         HttpClient http,
@@ -40,6 +48,7 @@ public class GBrainClient : IGBrainClient
         _http = http;
         _logger = logger;
         _baseUrl = (config["Memory:GBrainBaseUrl"] ?? "http://localhost:3131").TrimEnd('/');
+        _accessToken = config["Memory:GBrainAccessToken"] ?? string.Empty;
     }
 
     // ── Health check ──────────────────────────────────────────────────────────
@@ -48,7 +57,9 @@ public class GBrainClient : IGBrainClient
     {
         try
         {
-            var response = await _http.GetAsync($"{_baseUrl}/health", cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/health");
+            AddAuthHeader(request);
+            var response = await _http.SendAsync(request, cancellationToken);
             return response.IsSuccessStatusCode;
         }
         catch (Exception ex)
@@ -66,47 +77,39 @@ public class GBrainClient : IGBrainClient
         string guestMessage,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(gBrainMemoryKey))
-        {
-            _logger.LogWarning(
-                "GBrain search called without gBrainMemoryKey for property {PropertyKey}. " +
-                "Results would not be scoped — skipping GBrain call.",
-                propertyKey);
-            return string.Empty;
-        }
+        // Prefix the propertyKey into the query so GBrain retrieves chunks from
+        // the correct property. GBrain has no namespace filter on the query tool —
+        // property scoping is semantic, driven by the propertyKey prefix.
+        var scopedQuery = $"{propertyKey} {guestMessage}";
 
         _logger.LogInformation(
-            "GBrain search | Property={PropertyKey} | Namespace={Namespace} | " +
-            "Query={Query}",
+            "GBrain search | Property={PropertyKey} | Namespace={Namespace} | Query={Query}",
             propertyKey,
             gBrainMemoryKey,
-            guestMessage.Length > 80 ? guestMessage[..80] + "…" : guestMessage);
+            scopedQuery.Length > 100 ? scopedQuery[..100] + "…" : scopedQuery);
 
         try
         {
-            var context = await SendMcpSearchAsync(propertyKey, gBrainMemoryKey, guestMessage, cancellationToken);
+            var context = await SendMcpQueryAsync(scopedQuery, DefaultTopK, cancellationToken);
 
             if (string.IsNullOrWhiteSpace(context))
             {
                 _logger.LogInformation(
-                    "GBrain returned no context | Property={PropertyKey} | Namespace={Namespace}",
-                    propertyKey, gBrainMemoryKey);
+                    "GBrain returned no context | Property={PropertyKey}", propertyKey);
                 return string.Empty;
             }
 
             _logger.LogInformation(
-                "GBrain context retrieved | Property={PropertyKey} | Namespace={Namespace} | " +
-                "Length={Length}",
-                propertyKey, gBrainMemoryKey, context.Length);
+                "GBrain context retrieved | Property={PropertyKey} | Length={Length}",
+                propertyKey, context.Length);
 
             return context;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "GBrain search failed | Property={PropertyKey} | Namespace={Namespace} | " +
-                "BaseUrl={BaseUrl}",
-                propertyKey, gBrainMemoryKey, _baseUrl);
+                "GBrain search failed | Property={PropertyKey} | BaseUrl={BaseUrl}",
+                propertyKey, _baseUrl);
             return string.Empty;
         }
     }
@@ -114,135 +117,168 @@ public class GBrainClient : IGBrainClient
     // ── MCP protocol ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Sends an MCP tool-call request to POST /mcp.
+    /// Sends an MCP tool-call to POST /mcp using the "query" tool.
     ///
-    /// MCP standard tool-call shape:
-    /// {
-    ///   "jsonrpc": "2.0",
-    ///   "id":      1,
-    ///   "method":  "tools/call",
-    ///   "params": {
-    ///     "name":      "search",
-    ///     "arguments": {
-    ///       "query":     "{guestMessage}",
-    ///       "namespace": "{gBrainMemoryKey}"
-    ///     }
-    ///   }
-    /// }
+    /// Required headers (confirmed against GBrain v0.37):
+    ///   Authorization: Bearer {token}
+    ///   Accept: application/json, text/event-stream
     ///
-    /// TODO: Verify exact tool name and argument keys at http://localhost:3131/admin.
-    ///       If GBrain uses different argument names (e.g. "q", "scope", "collection"),
-    ///       update McpSearchArguments and re-test with gbrain search commands.
-    ///       If GBrain exposes a simpler REST search endpoint, replace this method
-    ///       with a direct HTTP call — the interface contract stays unchanged.
+    /// The response is SSE-wrapped even when Accept includes application/json:
+    ///   "event: message\ndata: {jsonrpc-payload}\n\n"
     /// </summary>
-    private async Task<string> SendMcpSearchAsync(
-        string propertyKey,
-        string gBrainMemoryKey,
-        string guestMessage,
+    private async Task<string> SendMcpQueryAsync(
+        string query,
+        int limit,
         CancellationToken cancellationToken)
     {
-        var request = new McpToolCallRequest
+        var mcpRequest = new McpToolCallRequest
         {
             Id = 1,
             Params = new McpToolCallParams
             {
-                Name = "search",
-                Arguments = new McpSearchArguments
+                Name = "query",
+                Arguments = new McpQueryArguments
                 {
-                    Query = guestMessage,
-                    Namespace = gBrainMemoryKey
+                    Query = query,
+                    Limit = limit
                 }
             }
         };
 
-        var httpResponse = await _http.PostAsJsonAsync(
-            $"{_baseUrl}/mcp",
-            request,
-            cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/mcp");
+        AddAuthHeader(request);
+
+        // GBrain requires both content types in Accept — without text/event-stream
+        // it returns: "Not Acceptable: Client must accept both application/json and text/event-stream"
+        request.Headers.Add("Accept", "application/json, text/event-stream");
+        request.Content = JsonContent.Create(mcpRequest);
+
+        var httpResponse = await _http.SendAsync(request, cancellationToken);
 
         if (!httpResponse.IsSuccessStatusCode)
         {
             _logger.LogWarning(
-                "GBrain /mcp returned {Status} for property {PropertyKey}.",
-                (int)httpResponse.StatusCode, propertyKey);
+                "GBrain /mcp returned {Status}. Query={Query}",
+                (int)httpResponse.StatusCode, query);
             return string.Empty;
         }
 
-        var json = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
-        return ExtractContextFromMcpResponse(json, propertyKey);
+        var raw = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
+        return ParseSseResponse(raw, query);
     }
 
     /// <summary>
-    /// Extracts plain-text context from the MCP tool response.
+    /// Parses the SSE-wrapped MCP response.
     ///
-    /// Standard MCP tool response shape:
-    /// {
-    ///   "jsonrpc": "2.0",
-    ///   "id": 1,
-    ///   "result": {
-    ///     "content": [
-    ///       { "type": "text", "text": "...retrieved context..." }
-    ///     ]
-    ///   }
-    /// }
+    /// GBrain response format:
+    ///   "event: message\ndata: {jsonrpc-payload}\n\n"
     ///
-    /// TODO: If GBrain returns a different structure (e.g. result.context, result.chunks,
-    ///       or a top-level "text" field), update the JsonPath extraction below.
-    ///       Inspect the raw response by setting LogLevel:Default = Debug and checking logs.
+    /// jsonrpc payload:
+    ///   { "result": { "content": [ { "type": "text", "text": "[...chunk array JSON...]" } ] } }
+    ///
+    /// Each chunk in the array:
+    ///   { "slug": "bluehorizon/policies/late-checkout-policy",
+    ///     "chunk_text": "# Blue Horizon — Late Checkout Policy\n...",
+    ///     "score": 0.9999 }
+    ///
+    /// We concatenate chunk_text values separated by double newlines.
     /// </summary>
-    private string ExtractContextFromMcpResponse(string json, string propertyKey)
+    private string ParseSseResponse(string raw, string query)
     {
+        if (string.IsNullOrWhiteSpace(raw))
+            return string.Empty;
+
         try
         {
-            using var doc = JsonDocument.Parse(json);
+            // Extract the JSON payload from the SSE "data: {...}" line
+            var jsonPayload = ExtractSseData(raw);
+            if (string.IsNullOrWhiteSpace(jsonPayload))
+            {
+                _logger.LogWarning("GBrain SSE response had no data line. Raw={Raw}",
+                    raw.Length > 200 ? raw[..200] : raw);
+                return string.Empty;
+            }
+
+            using var doc = JsonDocument.Parse(jsonPayload);
             var root = doc.RootElement;
 
-            // Standard MCP path: result.content[0].text
-            if (root.TryGetProperty("result", out var result) &&
-                result.TryGetProperty("content", out var content) &&
-                content.ValueKind == JsonValueKind.Array)
+            // result.content[0].text → JSON string containing the chunk array
+            if (!root.TryGetProperty("result", out var result) ||
+                !result.TryGetProperty("content", out var content) ||
+                content.ValueKind != JsonValueKind.Array)
             {
-                var texts = new List<string>();
-
-                foreach (var item in content.EnumerateArray())
-                {
-                    if (item.TryGetProperty("text", out var textProp))
-                    {
-                        var text = textProp.GetString();
-                        if (!string.IsNullOrWhiteSpace(text))
-                            texts.Add(text.Trim());
-                    }
-                }
-
-                if (texts.Count > 0)
-                    return string.Join("\n\n", texts);
+                _logger.LogWarning("GBrain response missing result.content array. Query={Query}", query);
+                return string.Empty;
             }
 
-            // Fallback: result.context (non-standard but common in custom MCP servers)
-            if (root.TryGetProperty("result", out var resultAlt) &&
-                resultAlt.TryGetProperty("context", out var contextProp))
-            {
-                var ctx = contextProp.GetString();
-                if (!string.IsNullOrWhiteSpace(ctx))
-                    return ctx.Trim();
-            }
+            // content[0].text is a JSON-encoded string of the chunk array
+            var firstContent = content.EnumerateArray().FirstOrDefault();
+            if (!firstContent.TryGetProperty("text", out var textProp))
+                return string.Empty;
 
-            _logger.LogWarning(
-                "GBrain /mcp response did not match expected shape for property {PropertyKey}. " +
-                "Raw response: {Json}",
-                propertyKey,
-                json.Length > 500 ? json[..500] + "…" : json);
+            var chunksJson = textProp.GetString();
+            if (string.IsNullOrWhiteSpace(chunksJson))
+                return string.Empty;
 
-            return string.Empty;
+            return ExtractChunkTexts(chunksJson, query);
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex,
-                "Failed to parse GBrain /mcp response for property {PropertyKey}.",
-                propertyKey);
+            _logger.LogError(ex, "Failed to parse GBrain response. Query={Query}", query);
             return string.Empty;
         }
+    }
+
+    private static string ExtractSseData(string raw)
+    {
+        // Find the "data: " line in the SSE stream
+        foreach (var line in raw.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                return trimmed["data:".Length..].Trim();
+        }
+        return string.Empty;
+    }
+
+    private string ExtractChunkTexts(string chunksJson, string query)
+    {
+        using var chunksDoc = JsonDocument.Parse(chunksJson);
+        var chunks = chunksDoc.RootElement;
+
+        if (chunks.ValueKind != JsonValueKind.Array)
+            return string.Empty;
+
+        var texts = new List<string>();
+        foreach (var chunk in chunks.EnumerateArray())
+        {
+            if (chunk.TryGetProperty("chunk_text", out var chunkText))
+            {
+                var text = chunkText.GetString();
+                if (!string.IsNullOrWhiteSpace(text))
+                    texts.Add(text.Trim());
+            }
+        }
+
+        if (texts.Count == 0)
+        {
+            _logger.LogInformation("GBrain returned chunks but all had empty chunk_text. Query={Query}", query);
+            return string.Empty;
+        }
+
+        _logger.LogDebug("GBrain returned {Count} chunk(s) for query={Query}", texts.Count, query);
+        return string.Join("\n\n---\n\n", texts);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void AddAuthHeader(HttpRequestMessage request)
+    {
+        if (!string.IsNullOrWhiteSpace(_accessToken))
+            request.Headers.Add("Authorization", $"Bearer {_accessToken}");
+        else
+            _logger.LogWarning(
+                "GBrain access token is not configured. Set Memory:GBrainAccessToken in appsettings.json.");
     }
 
     // ── MCP request models ────────────────────────────────────────────────────
@@ -257,27 +293,22 @@ public class GBrainClient : IGBrainClient
 
     private sealed class McpToolCallParams
     {
-        [JsonPropertyName("name")]      public string Name { get; set; } = "search";
-        [JsonPropertyName("arguments")] public McpSearchArguments Arguments { get; set; } = new();
+        [JsonPropertyName("name")]      public string Name { get; set; } = "query";
+        [JsonPropertyName("arguments")] public McpQueryArguments Arguments { get; set; } = new();
     }
 
-    private sealed class McpSearchArguments
+    private sealed class McpQueryArguments
     {
         /// <summary>
-        /// The guest message used as the semantic search query.
-        /// TODO: verify argument key name against GBrain admin at /admin.
-        /// Common alternatives: "q", "query", "message", "text".
+        /// Prefixed with PropertyKey for property scoping:
+        /// e.g. "BlueHorizon late checkout cleaners 10am"
         /// </summary>
         [JsonPropertyName("query")]
         public string Query { get; set; } = string.Empty;
 
-        /// <summary>
-        /// The GBrain memory namespace (e.g. "property:blue-horizon").
-        /// Scopes retrieval to a single property's memory.
-        /// TODO: verify argument key name against GBrain admin at /admin.
-        /// Common alternatives: "namespace", "scope", "collection", "filter".
-        /// </summary>
-        [JsonPropertyName("namespace")]
-        public string Namespace { get; set; } = string.Empty;
+        [JsonPropertyName("limit")]
+        public int Limit { get; set; } = 3;
     }
 }
+
+
