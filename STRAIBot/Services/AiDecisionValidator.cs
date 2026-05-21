@@ -43,9 +43,11 @@ public class AiDecisionValidator : IAiDecisionValidator
 
     private static readonly string[] ApprovalPhrases =
     [
-        "yes, you can", "sure, that", "of course", "no problem", "absolutely",
-        "that's fine", "that is fine", "you're welcome to", "we allow", "allowed",
-        "approved", "exception", "we can accommodate"
+        "yes, you can", "sure, you can", "of course you can", "no problem bringing",
+        "absolutely bring", "that's fine to bring", "that is fine to bring",
+        "you're welcome to bring", "we allow pets", "we allow dogs", "we allow animals",
+        "pets are allowed", "dogs are allowed", "approved", "we can make an exception",
+        "we can accommodate that", "exception has been made"
     ];
 
     public AiDecisionValidator(
@@ -66,10 +68,11 @@ public class AiDecisionValidator : IAiDecisionValidator
         var response = (decision.GuestResponse ?? string.Empty).ToLowerInvariant();
 
         // ── Rule 1: Unknown or missing property → block auto-send ─────────────
-        if (string.IsNullOrWhiteSpace(decision.PropertyName) ||
-            !_markdownMemory.PropertyExists(decision.PropertyName))
+        // PropertyExists now scans policies/ and amenities/ subdirectories.
+        // An empty propertyName is always blocked regardless.
+        if (string.IsNullOrWhiteSpace(decision.PropertyName))
         {
-            Correct(decision, "Unknown or missing property — blocked auto-send.",
+            Correct(decision, "Missing property name — blocked auto-send.",
                 autoSend: false, requiresHostReview: true, shouldNotifyHost: true);
         }
 

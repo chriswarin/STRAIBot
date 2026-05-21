@@ -4,12 +4,19 @@ using STRAIBot.Services.GBrain;
 using STRAIBot.Services.Guesty;
 using STRAIBot.Services.Memory;
 using STRAIBot.Services.Messaging;
+using STRAIBot.Services.OpenAI;
 using STRAIBot.Services.Properties;
 using STRAIBot.Services.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Serialize enums as strings (e.g. "HardRule" not 0, "Emergency" not 3)
+        options.JsonSerializerOptions.Converters.Add(
+            new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 
 builder.Services.AddOpenApi(options =>
 {
@@ -55,8 +62,12 @@ builder.Services.AddSingleton<IMessageRiskClassifier, MessageRiskClassifier>();
 builder.Services.AddScoped<IHostNotificationService, HostNotificationService>();
 
 // ── AI decision pipeline ──────────────────────────────────────────────────────
-// AiGuestMessageDecisionService: local placeholder today, OpenAI call tomorrow.
-// AiDecisionValidator: C# safety guardrail — never removed, always runs.
+// OpenAiDecisionClient: calls GPT-4o with system prompt + GBrain context.
+//   Configured via OpenAI:ApiKey and OpenAI:Model in appsettings.Development.json.
+//   Returns null on failure — AiGuestMessageDecisionService falls back to local placeholder.
+// AiGuestMessageDecisionService: tries OpenAI first, falls back to keyword-based placeholder.
+// AiDecisionValidator: C# safety guardrail — always runs, never removed.
+builder.Services.AddSingleton<IOpenAiDecisionClient, OpenAiDecisionClient>();
 builder.Services.AddScoped<IAiGuestMessageDecisionService, AiGuestMessageDecisionService>();
 builder.Services.AddScoped<IAiDecisionValidator, AiDecisionValidator>();
 

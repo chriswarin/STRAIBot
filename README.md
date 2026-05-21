@@ -2,38 +2,13 @@
 
 **AI-native operational messaging platform for short-term rentals.**
 
-STRAIBot is a **webhook-driven AI orchestration runtime** — not a chatbot wrapper. It receives inbound PMS events, resolves property context via live semantic memory retrieval (**GBrain MCP**), routes decisions through a structured AI reasoning layer, enforces operational policy in C#, and either autonomously replies or escalates to a human — all as a composable, API-first system.
+STRAIBot is a **webhook-driven AI orchestration runtime** — not a chatbot wrapper. It receives inbound PMS events, resolves property context via live semantic memory retrieval (**GBrain MCP**), routes decisions through **OpenAI GPT-4o**, enforces operational policy in C#, and either autonomously replies or escalates to a human — all as a composable, API-first system.
 
 ```
-PMS Webhook → Property Resolution → GBrain MCP Retrieval → AI Decision → Policy Validation → Send or Escalate
+PMS Webhook → Property Resolution → GBrain MCP Retrieval → OpenAI GPT-4o Decision → Policy Validation → Send or Escalate
 ```
 
-> **Beta** · ASP.NET Core 10 · OpenAPI 3.1 · Scalar · GBrain v0.37 · Guesty Open API · C# 13
-
----
-
-## What's Working — Beta Status
-
-| Layer | Status | Notes |
-|---|---|---|
-| ASP.NET Core 10 API | ✅ Running | OpenAPI 3.1 + Scalar docs |
-| GBrain MCP retrieval | ✅ Live | OAuth 2.1, SSE protocol, 73 granular memory files |
-| Property memory (Markdown fallback) | ✅ Live | Auto-fallback when GBrain unavailable |
-| Property mapping + resolution | ✅ Live | PropertyKey, GBrainMemoryKey, external IDs |
-| AI decision contract | ✅ Live | Typed `AiGuestMessageDecision` JSON |
-| C# policy validation | ✅ Live | Emergency override, legal escalation, approval phrase detection |
-| Emergency classification | ✅ Live | Water leak → riskLevel: Emergency, shouldNotifyHost: true |
-| HardRule enforcement | ✅ Live | Pets, occupancy, late checkout, smoking |
-| HostDecision escalation | ✅ Live | Service animal, early check-in, ADA |
-| Guesty webhook receiver | ✅ Live | Immediate 200 OK, background queue |
-| Deduplication store | ✅ Live | In-memory message ID tracking |
-| HTML message cleaning | ✅ Live | Guesty HTML → plain text |
-| Memory test diagnostic endpoint | ✅ Live | `GET /api/memory/test` |
-| GBrain health check | ✅ Live | Per-request health gate |
-| OpenAI structured generation | 🔜 Next | Interface built, placeholder active |
-| Guesty outbound messaging | 🔜 Next | Client built, dry-run mode |
-| Database persistence | 📋 Planned | Audit trail, durable dedup |
-| Host mobile notifications | 📋 Planned | SMS / push |
+> **Beta** · ASP.NET Core 10 · OpenAPI 3.1 · Scalar · GBrain v0.37 · OpenAI GPT-4o · Guesty Open API · C# 13
 
 ---
 
@@ -168,24 +143,28 @@ Property scoping is achieved by prefixing `{PropertyKey}` into the query. GBrain
 
 **GBrain retrieves context. It does not generate guest responses.**
 
-### OpenAI — Structured Reasoning Layer (next milestone)
+### OpenAI — Structured Reasoning Layer ✅ Live
 
-Interface and contract are built. `AiGuestMessageDecisionService` currently uses a local placeholder that produces typed `AiGuestMessageDecision` JSON. OpenAI will replace the placeholder in the next milestone — the rest of the pipeline is unchanged.
+GPT-4o receives a structured prompt containing the retrieved GBrain context and guest message, and returns a typed `AiGuestMessageDecision` JSON object. The model is instructed to use only the provided property context and never invent policies, exceptions, or approvals.
+
+All OpenAI output is validated by `AiDecisionValidator` (C#) before any message is sent — emergency overrides, legal escalation, and approval phrase detection cannot be bypassed by the model.
+
+Configured via `OpenAI:ApiKey` and `OpenAI:Model` in `appsettings.Development.json` (gitignored).
 
 ---
 
-## Verified Test Results — Beta
+## Verified Test Results
 
-All tested against live GBrain + running API:
+All tested against live GBrain + OpenAI GPT-4o + running API:
 
-| # | Property | Guest Message | Expected | Result |
-|---|---|---|---|---|
-| ✅ 1 | BlueHorizon | "Can I check out at noon?" | HardRule, checkout policy | ✅ Correct |
-| ✅ 2 | CozyCrab | "Can I bring my dog?" | HardRule, no pets $500 | ✅ Correct |
-| ✅ 3 | TurquoiseBay | "Is the pool heated?" | Informational, pool facts | ✅ Correct |
-| ✅ 4 | TurquoiseBay | "There is water leaking" | Emergency, notify host | ✅ Correct |
-| ✅ 5 | TurquoiseBay | "Can we have 16 people?" | HardRule, occupancy, notify | ✅ Correct |
-| ✅ 6 | BlueHorizon | "Do you allow service animals?" | HostDecision, escalate | ✅ Correct |
+| # | Property | Guest Message | riskLevel | policyRuleType | autoSend | notifyHost |
+|---|---|---|---|---|---|---|
+| ✅ | CozyCrab | "Can I bring my dog?" | Low | HardRule | true | false |
+| ✅ | BlueHorizon | "Can I check out at noon?" | Low | HardRule | true | false |
+| ✅ | TurquoiseBay | "Is the pool heated?" | Low | Informational | true | false |
+| ✅ | TurquoiseBay | "Can we have 16 people?" | Medium | HardRule | true | true |
+| ✅ | TurquoiseBay | "Water leaking from ceiling" | Emergency | Emergency | true | true |
+| ✅ | BlueHorizon | "Do you allow service animals?" | Medium | HostDecision | false | true |
 
 GBrain retrieval accuracy (confirmed via `/api/memory/test`):
 
@@ -313,9 +292,13 @@ Live webhook receiver. Returns `200 OK` immediately, processes in background.
 ### Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [Bun](https://bun.sh) — for GBrain
+- [Bun **1.2.14**](https://bun.sh) — for GBrain (see note below)
 - WSL2 — required for GBrain on Windows
-- OpenAI API key — for future AI reasoning step
+- OpenAI API key — used by both GBrain embeddings and GPT-4o decisions
+
+> **GBrain + Bun compatibility:** Bun 1.3.x breaks PGLite WASM initialization. Use Bun 1.2.14.
+> Install it with: `curl -fsSL https://bun.sh/install | bash -s bun-v1.2.14`
+> See [`docs/gbrain-troubleshooting.md`](docs/gbrain-troubleshooting.md) if GBrain fails to start.
 
 ### 1 — Clone and run
 
@@ -337,11 +320,14 @@ bun install -g gbrain
 
 ### 3 — Initialize GBrain
 
-> Use the **same embedding model** for init, import, and all queries.
+> **Critical:** always set `GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large` for init, import, and serve.
+> If init and import use different models you will get a dimension mismatch error (1536 vs 1280) and all files will fail to import.
+> See [`docs/gbrain-troubleshooting.md`](docs/gbrain-troubleshooting.md) — Issue 2.
 
 ```sh
 export OPENAI_API_KEY=sk-...
-GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large gbrain init --pglite
+export GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large
+gbrain init --pglite
 ```
 
 ### 4 — Import property memory
@@ -353,13 +339,23 @@ gbrain import /mnt/c/Users/chris/source/repos/STRAIBot/memory
 
 ### 5 — Start GBrain HTTP server
 
+Use the recovery script — it handles Bun version, lock files, and prints the admin token:
+
+```powershell
+wsl bash -c "tr -d '\r' < /mnt/c/Users/chris/source/repos/STRAIBot/scripts/start_gbrain.sh > /tmp/sg.sh && bash /tmp/sg.sh"
+```
+
+Or manually:
+
 ```sh
-nohup /home/chris/.bun/bin/bun /home/chris/.bun/bin/gbrain serve \
+nohup /home/chris/.bun/bin/bun /home/chris/gbrain/src/cli.ts serve \
   --http --port 3131 --enable-dcr --bind 0.0.0.0 \
   >> /tmp/gbrain.log 2>&1 &
 
 cat /tmp/gbrain.log   # copy the Admin Token from the startup banner
 ```
+
+> If GBrain crashes immediately: see [`docs/gbrain-troubleshooting.md`](docs/gbrain-troubleshooting.md)
 
 ### 6 — Register STRAIBot client and get token
 
@@ -439,20 +435,29 @@ STRAIBot/
 │   ├── Memory/
 │   │   ├── IMemoryContextService.cs    # Unified memory interface
 │   │   └── MemoryContextService.cs    # GBrain → Markdown routing
-│   ├── AiGuestMessageDecisionService   # → OpenAI (next milestone)
-│   ├── AiDecisionValidator             # C# safety guardrail
+│   ├── OpenAI/
+│   │   ├── IOpenAiDecisionClient.cs    # OpenAI client interface
+│   │   └── OpenAiDecisionClient.cs    # GPT-4o structured JSON call
+│   ├── AiGuestMessageDecisionService   # OpenAI first, placeholder fallback
+│   ├── AiDecisionValidator             # C# safety guardrail — always runs
 │   ├── DraftResponseService            # Pipeline orchestrator
 │   ├── Guesty/                         # Reservation + message clients
 │   ├── Properties/                     # Property mapping + resolution
 │   ├── Messaging/                      # Queue + background processor
 │   └── Text/                           # HTML cleaner
+├── scripts/
+│   ├── start_gbrain.sh                 # Start GBrain MCP server
+│   ├── register_gbrain_client.ps1      # OAuth client registration + token
+│   ├── gbrain_recover.sh               # Full recovery (Bun pin + DB reinit)
+│   └── fix_gbrain.py                   # Reference: dual-namespace fix
 ├── memory/
 │   ├── BlueHorizon/policies/ + amenities/
 │   ├── CozyCrab/policies/ + amenities/
 │   └── TurquoiseBay/policies/ + amenities/
 └── docs/
-    ├── property-memory-dump.md         # Human/Copilot reference
-    ├── gbrain-memory-structure.md      # Memory architecture docs
+    ├── gbrain-troubleshooting.md       # WASM crash, dim mismatch, token expiry
+    ├── gbrain-memory-structure.md      # Memory architecture + import rules
+    ├── property-memory-dump.md         # Human/Copilot reference only
     └── archive/broad-memory/           # Archived pre-granular files
 ```
 
@@ -465,9 +470,9 @@ STRAIBot/
 | Runtime | ASP.NET Core 10, C# 13 |
 | API Docs | OpenAPI 3.1, Scalar |
 | Memory | GBrain v0.37 (vector MCP), Markdown (fallback) |
-| Embeddings | `text-embedding-3-large` (OpenAI) |
+| Embeddings | `text-embedding-3-large` (OpenAI) — 1536 dimensions |
 | MCP Protocol | JSON-RPC 2.0 over HTTP SSE, OAuth 2.1 |
-| AI Reasoning | Placeholder → OpenAI GPT-4o (next milestone) |
+| AI Reasoning | OpenAI GPT-4o (live), keyword placeholder (fallback) |
 | PMS Integration | Guesty Open API v1 |
 | Queue | `System.Threading.Channels` → Azure Service Bus (planned) |
 | Local Vector DB | PGLite via GBrain |
@@ -499,20 +504,21 @@ GBrain stores property policies and amenity facts — not conversation history. 
 
 ### ✅ Beta Complete
 - ASP.NET Core 10 API with OpenAPI + Scalar
-- GBrain MCP integration (OAuth 2.1, SSE, `query` tool)
-- 73 granular single-topic memory files across 3 properties
-- Typed `AiGuestMessageDecision` contract
-- C# safety validator (emergency, legal, confidence gates)
-- Guesty webhook receiver + background queue
+- GBrain MCP integration (OAuth 2.1, SSE, `query` tool, 86 memory files)
+- OpenAI GPT-4o structured JSON decision generation (live)
+- Typed `AiGuestMessageDecision` contract with C# safety validator
+- Emergency override, legal escalation, approval phrase detection
+- Guesty webhook receiver + background processing queue
 - Property mapping (PropertyKey, GBrainMemoryKey, platform IDs)
 - Markdown fallback when GBrain unavailable
-- Deduplication store
-- Memory test diagnostic endpoint
+- Deduplication store, HTML message cleaning
+- Memory test diagnostic endpoint (`GET /api/memory/test`)
+- GBrain recovery scripts + troubleshooting docs
 
 ### 🔜 Next
-- OpenAI GPT-4o structured JSON decision generation
 - Guesty outbound reply (live send with dry-run gate)
-- Token refresh automation for GBrain OAuth
+- Automatic GBrain OAuth token refresh
+- WSL IP auto-detection (no manual appsettings update on reboot)
 
 ### 📋 Planned
 - Azure OpenAI support
@@ -527,7 +533,7 @@ GBrain stores property policies and amenity facts — not conversation history. 
 
 ## Disclaimer
 
-STRAIBot is a **beta prototype**. Not production-ready.
+STRAIBot is a **beta prototype** with live OpenAI GPT-4o and GBrain MCP integration. Not production-ready.
 
 Production requirements include: structured observability, durable message queue, database audit trail, webhook signature verification, rate limiting, AI output monitoring, policy versioning, human approval workflows, and load testing.
 

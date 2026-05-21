@@ -1,4 +1,5 @@
 using STRAIBot.Models;
+using STRAIBot.Services.OpenAI;
 
 namespace STRAIBot.Services;
 
@@ -20,6 +21,7 @@ namespace STRAIBot.Services;
 /// </summary>
 public class AiGuestMessageDecisionService : IAiGuestMessageDecisionService
 {
+    private readonly IOpenAiDecisionClient _openAi;
     private readonly ILogger<AiGuestMessageDecisionService> _logger;
 
     // ── OpenAI system prompt (ready for future integration) ──────────────────
@@ -113,28 +115,40 @@ public class AiGuestMessageDecisionService : IAiGuestMessageDecisionService
          "PartyRisk", "Occupancy and Party Policy"),
     ];
 
-    public AiGuestMessageDecisionService(ILogger<AiGuestMessageDecisionService> logger)
+    public AiGuestMessageDecisionService(
+        IOpenAiDecisionClient openAi,
+        ILogger<AiGuestMessageDecisionService> logger)
     {
+        _openAi = openAi;
         _logger = logger;
     }
 
-    public Task<AiGuestMessageDecision> DecideAsync(
+    public async Task<AiGuestMessageDecision> DecideAsync(
         string propertyName,
         string guestMessage,
         string retrievedContext,
         CancellationToken cancellationToken = default)
     {
-        // ── FUTURE: replace this entire method body with an OpenAI API call ──
-        // var prompt = BuildPrompt(propertyName, guestMessage, retrievedContext);
-        // var json = await _openAiClient.CompleteAsync(SystemPrompt, prompt, cancellationToken);
-        // return JsonSerializer.Deserialize<AiGuestMessageDecision>(json)!;
+        var userPrompt = BuildPrompt(propertyName, guestMessage, retrievedContext);
 
-        _logger.LogDebug(
-            "AiGuestMessageDecisionService running in local-placeholder mode for property {Property}.",
+        // ── Try OpenAI first ─────────────────────────────────────────────────
+        var decision = await _openAi.GetDecisionAsync(SystemPrompt, userPrompt, cancellationToken);
+
+        if (decision is not null)
+        {
+            // Ensure propertyName and guestMessage are always set — the model
+            // may omit them if context is short.
+            decision.PropertyName = propertyName;
+            decision.GuestMessage = guestMessage;
+            return decision;
+        }
+
+        // ── Fallback to local placeholder ─────────────────────────────────────
+        _logger.LogWarning(
+            "OpenAI returned null for property {Property} — falling back to local placeholder.",
             propertyName);
 
-        var decision = BuildLocalDecision(propertyName, guestMessage, retrievedContext);
-        return Task.FromResult(decision);
+        return BuildLocalDecision(propertyName, guestMessage, retrievedContext);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ public class MarkdownPropertyMemoryService : IPropertyMemoryService
     {
         var propertyPath = GetPropertyPath(propertyName);
         return Directory.Exists(propertyPath) &&
-               Directory.GetFiles(propertyPath, "*.md").Length > 0;
+               Directory.GetFiles(propertyPath, "*.md", SearchOption.AllDirectories).Length > 0;
     }
 
     public async Task<string> GetRelevantContextAsync(string propertyName, string guestMessage)
@@ -40,7 +40,7 @@ public class MarkdownPropertyMemoryService : IPropertyMemoryService
             return string.Empty;
         }
 
-        var mdFiles = Directory.GetFiles(propertyPath, "*.md");
+        var mdFiles = Directory.GetFiles(propertyPath, "*.md", SearchOption.AllDirectories);
         if (mdFiles.Length == 0)
         {
             _logger.LogWarning("No markdown files found for property: {PropertyName}", propertyName);
