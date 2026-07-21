@@ -19,35 +19,6 @@ public class DraftResponseController : ControllerBase
     /// <summary>
     /// Generate a draft guest response using property memory and risk classification.
     /// </summary>
-    /// <remarks>
-    /// Classifies the guest message by risk level, retrieves relevant property memory context,
-    /// and returns a ready-to-review guest response with routing flags.
-    ///
-    /// **Low-risk amenity question example:**
-    ///
-    ///     POST /api/draft-response
-    ///     {
-    ///         "propertyName": "CozyCrab",
-    ///         "guestMessage": "Do you allow pets?"
-    ///     }
-    ///
-    /// Expected result: `policyRuleType = HardRule`, `shouldAutoSend = true`,
-    /// `requiresHostReview = false`, `shouldNotifyHost = false`,
-    /// firm no-pets response drawn from property memory.
-    ///
-    /// **Emergency example:**
-    ///
-    ///     POST /api/draft-response
-    ///     {
-    ///         "propertyName": "TurquoiseBay",
-    ///         "guestMessage": "There is water leaking from the ceiling"
-    ///     }
-    ///
-    /// Expected result: `riskLevel = Emergency`, `shouldAutoSend = true`,
-    /// `requiresHostReview = true`, `shouldNotifyHost = true`.
-    ///
-    /// **Available property names:** CozyCrab, BlueHorizon, TurquoiseBay
-    /// </remarks>
     /// <param name="request">Property name and guest message.</param>
     /// <returns>Draft response with risk classification and routing flags.</returns>
     /// <response code="200">Draft response generated successfully.</response>

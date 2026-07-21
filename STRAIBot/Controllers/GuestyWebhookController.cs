@@ -38,15 +38,6 @@ public class GuestyWebhookController : ControllerBase
     /// <summary>
     /// Guesty webhook receiver. Acknowledges the event and enqueues it for async processing.
     /// </summary>
-    /// <remarks>
-    /// Configure this URL in your Guesty webhook settings:
-    ///   POST https://your-host/api/webhooks/guesty
-    ///
-    /// Supported event: reservation.messageReceived
-    ///
-    /// Other event types are acknowledged (200) and silently ignored so Guesty
-    /// does not retry them.
-    /// </remarks>
     [HttpPost("guesty")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Receive([FromBody] GuestyWebhookEnvelope envelope)

@@ -1,3 +1,6 @@
 <Solution>
+  <Project Path="STRAIBot.Tests/STRAIBot.Tests.csproj">
+    <Build Solution="Debug|*" Project="false" />
+  </Project>
   <Project Path="STRAIBot/STRAIBot.csproj" />
 </Solution>

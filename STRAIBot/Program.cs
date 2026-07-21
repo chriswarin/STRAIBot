@@ -18,20 +18,6 @@ builder.Services.AddControllers()
             new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
 
-builder.Services.AddOpenApi(options =>
-{
-    options.AddDocumentTransformer((doc, _, _) =>
-    {
-        doc.Info.Title = "STRAIBot API";
-        doc.Info.Version = "v1";
-        doc.Info.Description =
-           "Event-driven AI guest communication platform for short-term rentals. " +
-            "Combines PMS webhooks, structured GBrain-style operational memory retrieval, " +
-            "and LLM reasoning to generate context-aware guest messaging, risk classification, " +
-            "policy enforcement, and autonomous escalation workflows.";
-        return Task.CompletedTask;
-    });
-});
 
 // ── Property memory retrieval ─────────────────────────────────────────────────
 // MarkdownPropertyMemoryService reads local memory/{PropertyKey}/**/*.md files.
@@ -106,7 +92,6 @@ var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
     app.MapScalarApiReference(options =>
     {
         options.Title = "STRAIBot API";
